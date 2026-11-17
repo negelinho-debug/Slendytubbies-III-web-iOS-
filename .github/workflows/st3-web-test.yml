@@ -1,0 +1,136 @@
+name: ST3 WebGL iPhone Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Build test IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="Payload/ST3WebTest.app"
+          mkdir -p "$app"
+
+          cat > Host.m <<'EOF'
+          #import <UIKit/UIKit.h>
+          #import <WebKit/WebKit.h>
+
+          @interface GameController : UIViewController <WKNavigationDelegate>
+          @end
+
+          @implementation GameController
+          - (void)loadView {
+              WKWebViewConfiguration *config = [WKWebViewConfiguration new];
+              config.allowsInlineMediaPlayback = YES;
+              WKWebView *web = [[WKWebView alloc] initWithFrame:CGRectZero configuration:config];
+              web.navigationDelegate = self;
+              self.view = web;
+          }
+
+          - (void)viewDidLoad {
+              [super viewDidLoad];
+              WKWebView *web = (WKWebView *)self.view;
+              NSURL *url = [NSURL URLWithString:@"https://nobrowebport.github.io/S3OnlinePort/"];
+              [web loadRequest:[NSURLRequest requestWithURL:url]];
+          }
+
+          - (BOOL)prefersStatusBarHidden {
+              return YES;
+          }
+
+          - (void)webView:(WKWebView *)webView
+              didFailProvisionalNavigation:(WKNavigation *)navigation
+                                  withError:(NSError *)error {
+              if ([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled) {
+                  return;
+              }
+              UIAlertController *alert = [UIAlertController
+                  alertControllerWithTitle:@"Не удалось открыть игру"
+                  message:error.localizedDescription
+                  preferredStyle:UIAlertControllerStyleAlert];
+              [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                  style:UIAlertActionStyleDefault handler:nil]];
+              [self presentViewController:alert animated:YES completion:nil];
+          }
+          @end
+
+          @interface GameSceneDelegate : UIResponder <UIWindowSceneDelegate>
+          @property (nonatomic, strong) UIWindow *window;
+          @end
+
+          @implementation GameSceneDelegate
+          - (void)scene:(UIScene *)scene
+              willConnectToSession:(UISceneSession *)session
+                          options:(UISceneConnectionOptions *)options {
+              self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+              self.window.rootViewController = [GameController new];
+              [self.window makeKeyAndVisible];
+          }
+          @end
+
+          @interface AppDelegate : UIResponder <UIApplicationDelegate>
+          @end
+          @implementation AppDelegate
+          @end
+
+          int main(int argc, char *argv[]) {
+              @autoreleasepool {
+                  return UIApplicationMain(argc, argv, nil, NSStringFromClass([AppDelegate class]));
+              }
+          }
+          EOF
+
+          cat > "$app/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key><string>ST3 Web Test</string>
+            <key>CFBundleExecutable</key><string>ST3WebTest</string>
+            <key>CFBundleIdentifier</key><string>com.st3.webgltest</string>
+            <key>CFBundleName</key><string>ST3WebTest</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+            <key>MinimumOSVersion</key><string>15.0</string>
+            <key>UIDeviceFamily</key><array><integer>1</integer></array>
+            <key>UILaunchScreen</key><dict/>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>UIApplicationSceneManifest</key>
+            <dict>
+              <key>UISceneConfigurations</key>
+              <dict>
+                <key>UIWindowSceneSessionRoleApplication</key>
+                <array>
+                  <dict>
+                    <key>UISceneConfigurationName</key><string>Game</string>
+                    <key>UISceneDelegateClassName</key><string>GameSceneDelegate</string>
+                  </dict>
+                </array>
+              </dict>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+          plutil -lint "$app/Info.plist"
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$sdk" \
+            -miphoneos-version-min=15.0 -fobjc-arc Host.m \
+            -framework Foundation -framework UIKit -framework WebKit \
+            -framework CoreGraphics -o "$app/ST3WebTest"
+          zip -q -r ST3-Web-Test.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ST3-Web-Test
+          path: ST3-Web-Test.ipa
+          if-no-files-found: error
